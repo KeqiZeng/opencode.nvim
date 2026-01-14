@@ -1,11 +1,21 @@
 ---@module 'snacks.picker'
+---@module 'mini.pick'
 
 local M = {}
 
----@class opencode.select.Opts : snacks.picker.ui_select.Opts
+---@class opencode.select.Opts
+---
+---Picker to use: "mini.pick" | "snacks" | nil (uses `vim.ui.select` by default)
+---@field picker? string
 ---
 ---Configure the displayed sections.
 ---@field sections? opencode.select.sections.Opts
+---
+---Options for mini.pick (passed to `MiniPick.start()`).
+---@field mini_pick? table
+---
+---Options for snacks.picker (passed to `vim.ui.select`).
+---@field snacks? table
 
 ---@class opencode.select.sections.Opts
 ---
@@ -166,40 +176,7 @@ function M.select(opts)
         item.idx = i -- Store the index for non-snacks formatting
       end
 
-      ---@type snacks.picker.ui_select.Opts
-      local select_opts = {
-        ---@param item snacks.picker.finder.Item
-        ---@param is_snacks boolean
-        format_item = function(item, is_snacks)
-          if is_snacks then
-            if item.__group then
-              return { { item.name, "Title" } }
-            end
-            local formatted = vim.deepcopy(item.highlights)
-            if item.ask then
-              table.insert(formatted, { "…", "Keyword" })
-            end
-            table.insert(formatted, 1, { item.name, "Keyword" })
-            table.insert(formatted, 2, { string.rep(" ", 18 - #item.name) })
-            return formatted
-          else
-            local indent = #tostring(#items) - #tostring(item.idx)
-            if item.__group then
-              local divider = string.rep("—", (80 - #item.name) / 2)
-              return string.rep(" ", indent) .. divider .. item.name .. divider
-            end
-            return ("%s[%s]%s%s"):format(
-              string.rep(" ", indent),
-              item.name,
-              string.rep(" ", 18 - #item.name),
-              item.text or ""
-            )
-          end
-        end,
-      }
-      select_opts = vim.tbl_deep_extend("force", select_opts, opts)
-
-      vim.ui.select(items, select_opts, function(choice)
+      local function handle_choice(choice)
         if not choice then
           context:resume()
           return
@@ -227,7 +204,119 @@ function M.select(opts)
             require("opencode").stop()
           end
         end
+      end
+
+      local picker = opts.picker or nil
+      local has_mini_pick, MiniPick = pcall(require, "mini.pick")
+      local has_snacks = pcall(function()
+        return require("snacks").picker
       end)
+
+      if picker == "mini.pick" then
+        if not has_mini_pick then
+          vim.notify("mini.pick not installed, falling back to vim.ui.select", vim.log.levels.WARN)
+          picker = nil
+        end
+      elseif picker == "snacks" then
+        if not has_snacks then
+          vim.notify("snacks.nvim not installed, falling back to vim.ui.select", vim.log.levels.WARN)
+          picker = nil
+        end
+      end
+
+      local function format_item(item, is_snacks)
+        if is_snacks then
+          if item.__group then
+            return { { item.name, "Title" } }
+          end
+          local formatted = vim.deepcopy(item.highlights)
+          if item.ask then
+            table.insert(formatted, { "…", "Keyword" })
+          end
+          table.insert(formatted, 1, { item.name, "Keyword" })
+          table.insert(formatted, 2, { string.rep(" ", 18 - #item.name) })
+          return formatted
+        else
+          local indent = #tostring(#items) - #tostring(item.idx)
+          if item.__group then
+            local divider = string.rep("—", (80 - #item.name) / 2)
+            return string.rep(" ", indent) .. divider .. item.name .. divider
+          end
+          return ("%s[%s]%s%s"):format(
+            string.rep(" ", indent),
+            item.name,
+            string.rep(" ", 18 - #item.name),
+            item.text or ""
+          )
+        end
+      end
+
+      if picker == "mini.pick" then
+        local function format_mini_pick_item(item)
+          if item.__group then
+            return "── " .. item.name .. " ──"
+          end
+          local result = string.format("%-16s", item.name)
+          if item.ask then
+            result = result .. "… "
+          else
+            result = result .. "  "
+          end
+          result = result .. (item.text or "")
+          return result
+        end
+
+        local function mini_pick_preview(buf_id, item)
+          if not item or item.__group then
+            vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, { "" })
+            return
+          end
+
+          local preview = item.preview
+          if preview and preview.text then
+            local lines = vim.split(preview.text, "\n")
+            vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, lines)
+            if preview.extmarks then
+              for _, extmark in ipairs(preview.extmarks) do
+                local row, col, end_row, end_col, hl_group = unpack(extmark)
+                vim.api.nvim_buf_set_extmark(buf_id, 0, row, col, {
+                  end_row = end_row,
+                  end_col = end_col,
+                  hl_group = hl_group,
+                })
+              end
+            end
+          else
+            vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, { "No preview available" })
+          end
+        end
+
+        local mini_pick_opts = opts.mini_pick or {}
+        MiniPick.start(vim.tbl_deep_extend("force", {
+          source = {
+            items = items,
+            name = "opencode",
+            show = function(buf_id, items_arr, _query)
+              local lines = vim.tbl_map(format_mini_pick_item, items_arr)
+              vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, lines)
+            end,
+            preview = mini_pick_preview,
+            choose = function(item)
+              handle_choice(item)
+              return false
+            end,
+          },
+        }, mini_pick_opts))
+      elseif picker == "snacks" then
+        local snacks_opts = opts.snacks or {}
+        vim.ui.select(items, vim.tbl_deep_extend("force", {
+          format_item = format_item,
+        }, snacks_opts), handle_choice)
+      else
+        vim.ui.select(items, {
+          format_item = format_item,
+        }, handle_choice)
+      end
     end)
     :catch(function(err)
       vim.notify(err, vim.log.levels.ERROR)

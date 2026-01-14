@@ -29,7 +29,8 @@ vim.g.opencode_opts = vim.g.opencode_opts
 ---@field ask? opencode.ask.Opts
 ---
 ---Options for `select()`.
----Supports [`snacks.picker`](https://github.com/folke/snacks.nvim/blob/main/docs/picker.md).
+---Picker: "mini.pick" | "snacks" | nil (nil uses `vim.ui.select`).
+---Supports [`snacks.picker`](https://github.com/folke/snacks.nvim/blob/main/docs/picker.md) and [`mini.pick`](https://github.com/nvim-mini/mini.pick).
 ---@field select? opencode.select.Opts
 ---
 ---Options for `opencode` event handling.
@@ -85,6 +86,7 @@ local defaults = {
   },
   select = {
     prompt = "opencode: ",
+    picker = nil, -- "mini.pick" | "snacks" | nil (uses vim.ui.select by default)
     sections = {
       prompts = true,
       commands = {
@@ -104,8 +106,11 @@ local defaults = {
       preview = "preview",
       layout = {
         preset = "vscode",
-        hidden = {}, -- preview is hidden by default in `vim.ui.select`
+        hidden = {},
       },
+    },
+    mini_pick = {
+      window = {},
     },
   },
   events = {
